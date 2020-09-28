@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "social-ape-a8ff8",
+    "dev": "social-ape-a8ff8",
+    "prod": "social-ape-a8ff8",
+    "mu":"social-ape-a8ff8"
+  }
+}
