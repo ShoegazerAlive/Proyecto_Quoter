@@ -19,7 +19,10 @@ const { signup,
         login, 
         uploadImage, 
         addUserDetails, 
-        getAuthenticatedUser } = require("./handlers/users");
+        getAuthenticatedUser,
+        getUserDetails,
+        markNotificationsRead 
+      } = require("./handlers/users");
 
 
 
@@ -39,7 +42,8 @@ app.post('/login', login);
 app.post('/usuarios/image', FBAuth, uploadImage);
 app.post('/usuarios', FBAuth, addUserDetails);
 app.get('/usuarios', FBAuth, getAuthenticatedUser);
-
+app.get('/usuarios/:handle', getUserDetails);
+app.post('/notifications', FBAuth,markNotificationsRead);
 
 
 exports.api = functions.region('us-central1').https.onRequest(app);
@@ -50,9 +54,10 @@ exports.createNotificationOnLike = functions
   .region('us-central1')
   .firestore.document('likes/{id}')
   .onCreate((snapshot) => {
-     db.doc(`/Screams/${snapshot.data().screamId}`).get()
+     return db.doc(`/Screams/${snapshot.data().screamId}`).get()
         .then(doc =>{
-          if(doc.exists){
+          if(doc.exists && 
+            doc.data().userHandle !== snapshot.data().userHandle){
              return db.doc(`/notifications/${snapshot.id}`).set({
                 createdAt: new Date().toISOString(),
                 recipient: doc.data().userHandle,
@@ -67,10 +72,8 @@ exports.createNotificationOnLike = functions
                  //Aquí no tenemos que poner el return con más especificaciones, ya que se trata de un trigger de firebase y no un endpoint.
                   return;
                 })
-                .catch((err) =>{
-                  console.error(err);
-                  return; 
-                });
+                .catch((err) =>
+                  console.error(err));
         });
 
 exports.deleteNotificationOnUnLike = functions
@@ -112,3 +115,55 @@ exports.createNotificationOnComment = functions
               return;
             });
         });
+  exports.onUserImageChange = functions
+      .region('us-central1')
+      .firestore.document('/usuarios/{userId}')
+      .onUpdate((change) => {
+        console.log(change.before.data());
+        console.log(change.after.data());
+        if (change.before.data().imageUrl !== change.after.data().imageUrl) {
+          console.log('La imagen ha cambiado');
+          const batch = db.batch();
+          return db
+            .collection('Screams')
+            .where('userHandle', '==', change.before.data().handle)
+            .get()
+            .then((data) => {
+              data.forEach((doc) => {
+                const scream = db.doc(`/Screams/${doc.id}`);
+                batch.update(scream, { userImage: change.after.data().imageUrl });
+                });
+                return batch.commit();
+              });
+          } else return true;
+        });
+
+  exports.onScreamDelete = functions.region('us-central1').firestore.document('/Screams/{screamsId}')
+   .onDelete((snapshot, context) =>{
+     const screamdId = context.params.screamId;
+     const batch =  db.batch();
+     return db.collection('comments').where('screamId', '==', screamId).get()
+       .then((data) => {
+         data.forEach(doc =>{
+           batch.delete(db.doc(`/comments/${doc.id}`));
+         })
+         return db.collection('likes').where('screamId', '==', screamId).get();
+       })
+       .then((data) => {
+        data.forEach(doc =>{
+          batch.delete(db.doc(`/comments/${doc.id}`));
+        })
+        return db.collection('notifications').where('screamId', '==', screamId).get();
+      })
+      .then((data) => {
+        data.forEach(doc =>{
+          batch.delete(db.doc(`/notifications/${doc.id}`));
+        })
+        return batch.commit();
+      })
+      .catch(err =>{
+        console.error(err);
+        return res.status(500).json({error: err.code});
+      })
+       
+   })
